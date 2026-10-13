@@ -9,6 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=Libre+Franklin:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha384-c6Rcwz4e4CITMbu/NBmnNS8yN2sC3cUElMEMfP3vqqKFp7GOYaaBBCqmaWBjmkjb" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous">
 <link rel="stylesheet" href="style.css">
 <script>try{var t=localStorage.getItem('atlas-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
@@ -21,7 +23,7 @@
     <span>Ambassador Atlas</span>
   </a>
   <nav aria-label="Sections">
-    <a href="#map">Map</a><a href="#patterns">Patterns</a><a href="#directory">Directory</a>
+    <a href="#map">Map</a><a href="#patterns">Patterns</a><a href="#visionaries">Visionaries</a><a href="#directory">Directory</a>
   </nav>
   <div class="top-tools">
     <div class="seg" role="radiogroup" aria-label="Ambassador class year" id="yearSeg"></div>
@@ -49,10 +51,10 @@
     <div class="sec-head">
       <p class="kicker">Where they live</p>
       <h2 id="mapTitle">Ambassadors in <span id="mapCountries">48</span> countries</h2>
-      <p class="sub">Circle area is the number of ambassadors. Click a country to filter the directory.</p>
+      <p class="sub">One pin per ambassador at their city, clustered until you zoom in. Click a cluster to filter the directory to that country; click a pin to meet the person.</p>
     </div>
     <div class="map-grid">
-      <figure class="card map-card"><svg id="world" role="img" aria-label="World map of ambassadors by country"></svg></figure>
+      <figure class="card map-card"><div id="world" class="wmap"></div></figure>
       <figure class="card">
         <figcaption class="chart-title">By region</figcaption>
         <div id="regionBars" class="hbars"></div>
@@ -95,6 +97,43 @@
     </div>
   </section>
 
+  <section id="visionaries" class="band" aria-labelledby="visTitle">
+    <div class="sec-head">
+      <p class="kicker">Tableau Visionaries, formerly Zen Masters</p>
+      <h2 id="visTitle"><span id="visCount">135</span> Visionaries since 2012</h2>
+      <p class="sub">Each column below is one Visionary and each row is a class year. Read across a row for that year's class, or down a column for one person's run. Click a column to open their profile.</p>
+      <dl class="stats vis-stats" id="visStats"></dl>
+    </div>
+    <figure class="card loom-card">
+      <figcaption class="legend loom-legend" id="loomLegend"></figcaption>
+      <div class="loom-scroll"><svg id="loom" role="img" aria-label="Every Tableau Visionary by class year, 2012 to 2025"></svg></div>
+    </figure>
+    <div class="bento mt16">
+      <figure class="card span2">
+        <figcaption class="chart-title">Class size, returning and new</figcaption>
+        <svg id="visBars" role="img" aria-label="Visionaries per class year split into returning and new"></svg>
+      </figure>
+      <figure class="card">
+        <figcaption class="chart-title">The 2026 class</figcaption>
+        <p class="note" id="vis26Note"></p>
+        <div class="chips" id="vis26"></div>
+      </figure>
+      <figure class="card">
+        <figcaption class="chart-title">How long a run lasts</figcaption>
+        <p class="note">Classes served by past Visionaries (not in the 2025 class). Five classes leads to the Hall of Fame.</p>
+        <div id="visLong" class="hbars"></div>
+      </figure>
+      <figure class="card span2">
+        <figcaption class="chart-title">Find a Visionary</figcaption>
+        <div class="vis-tools">
+          <label class="f-search"><span class="sr">Search Visionaries</span><input id="vq" type="search" placeholder="Search by name" autocomplete="off"></label>
+          <div class="seg" role="radiogroup" aria-label="Which Visionaries" id="visSeg"></div>
+        </div>
+        <ul class="grid vis-grid" id="visGrid"></ul>
+      </figure>
+    </div>
+  </section>
+
   <section id="directory" class="band" aria-labelledby="dirTitle">
     <div class="sec-head">
       <p class="kicker">Directory</p>
@@ -116,7 +155,8 @@
 </main>
 
 <footer class="foot">
-  <p>Data: the public Tableau Ambassador vizzes on Tableau Public by Britton Staniar (2025 and 2026 classes, read 14 October 2026) and the 2024 class viz. The 2026 class is still onboarding, so a few people are missing. Photos load from tableau.com.</p>
+  <p>Visionaries: <a href="https://public.tableau.com/app/profile/kevin.flerlage/viz/TheTableauVisionaryZenCollection/TableauVisionaries">The Tableau Visionary Collection</a> by Kevin Flerlage (2012 to 2025) and Tableau's announcement of the 2026 class (18 March 2026).</p>
+  <p>Ambassadors: the public Tableau Ambassador vizzes on Tableau Public by Britton Staniar (2025 and 2026 classes, read 14 October 2026) and the 2024 class viz. The 2026 class is still onboarding, so a few people are missing. Photos load from tableau.com.</p>
   <p>An unofficial, fan-made remake by <a href="https://ankurnapa.github.io/tableau-field-notes/">Ankur Napa</a>. I'm a Tableau Ambassador (unpaid). Views are my own. Tableau is a trademark of Salesforce, Inc.</p>
 </footer>
 
@@ -128,8 +168,10 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha384-NElt3Op+9NBMCYaef5HxeJmU4Xeard/Lku8ek6hoPTvYkQPh3zLIrJP7KiRocsxO" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
 <script src="data.js"></script>
+<script src="vis.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

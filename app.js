@@ -158,61 +158,109 @@
     });
   }
 
-  /* Map */
-  let world = null;
-  const NAME_FIX = { 'United States': 'United States of America' };
-  const CENTRE = { 'United States': [-98.5, 39.5], France: [2.4, 46.6], Norway: [9, 61.5], Singapore: [103.8, 1.35], Canada: [-100, 56], Malaysia: [102, 4] };
-  async function loadWorld() {
-    try {
-      const topo = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json');
-      world = topojson.feature(topo, topo.objects.countries).features.filter((f) => f.properties.name !== 'Antarctica');
-    } catch (err) {
-      console.error('World map failed to load', err);
-      $('#world').outerHTML = '<p class="note">The map could not load. The bars beside it show the same counts.</p>';
+  /* Map: Leaflet on OpenStreetMap tiles, one pin per ambassador at their city,
+     clustered until you zoom in. Same build as the Beverage-AI Radar map.
+     Coordinates come from geo.json (tools/geocode.py); a city that would not
+     resolve falls back to its country. */
+  let GEO = {};
+  const WORLD_VIEW = { center: [25, 10], zoom: 2 };
+  async function loadGeo() {
+    try { GEO = await (await fetch('geo.json')).json(); } catch (err) { console.error('geo.json failed to load', err); }
+  }
+  const coordOf = (a) => GEO[a.loc] || GEO[a.k] || null;
+  const mapState = { map: null, cluster: null, markers: [], rowsKey: null, active: undefined };
+
+  function pickCountry(k) {
+    state.cty = k || ''; state.shown = PAGE;
+    renderFilters(); renderDirectory();
+  }
+
+  function buildMap() {
+    const el = $('#world');
+    if (!window.L) { el.innerHTML = '<p class="note">The map could not load. The bars beside it show the same counts.</p>'; return null; }
+    el.innerHTML = `<div class="lmap" role="region" aria-label="World map of ambassadors">
+        <button class="wmap__back" type="button">&larr; Back to world</button></div>
+      <div class="wmap__legend"><span class="wmap__keys"></span><span class="wmap__note"></span></div>`;
+    const map = L.map(el.querySelector('.lmap'), { scrollWheelZoom: false, worldCopyJump: true }).setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+    const cluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, zoomToBoundsOnClick: false }).addTo(map);
+    let wasHidden = true;
+    new ResizeObserver(() => {
+      map.invalidateSize();
+      const hidden = !el.offsetWidth;
+      if (wasHidden && !hidden) fitMap();
+      wasHidden = hidden;
+    }).observe(el);
+    const back = el.querySelector('.wmap__back');
+    L.DomEvent.disableClickPropagation(back);
+    back.addEventListener('click', () => pickCountry(''));
+    // A cluster that sits inside one country filters to it; a mixed one zooms in.
+    cluster.on('clusterclick', (e) => {
+      const keys = new Set(e.layer.getAllChildMarkers().map((mk) => mk._key));
+      const only = keys.size === 1 ? [...keys][0] : null;
+      if (only && only !== mapState.active) pickCountry(only);
+      else e.layer.zoomToBounds({ padding: [30, 30] });
+    });
+    map.on('popupopen', (e) => {
+      const btn = e.popup.getElement().querySelector('[data-bio]');
+      const person = e.popup._source && e.popup._source._person;
+      if (btn && person) btn.addEventListener('click', () => openDrawer(person));
+    });
+    return Object.assign(mapState, { map, cluster });
+  }
+
+  function fitMap() {
+    const { map, markers, active } = mapState;
+    if (!map) return;
+    const pts = markers.filter((mk) => !active || mk._key === active).map((mk) => mk.getLatLng());
+    if (pts.length) map.fitBounds(pts, { padding: [30, 30], maxZoom: active ? 9 : 3 });
+    else map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
+  }
+
+  function syncMap() {
+    if (!mapState.map && !buildMap()) return;
+    const el = $('#world');
+    const rows = yearRows();
+    const rowsKey = `${state.year}-${rows.length}`;
+    if (rowsKey !== mapState.rowsKey) {
+      mapState.rowsKey = rowsKey;
+      mapState.cluster.clearLayers();
+      mapState.markers = [];
+      const cities = new Set();
+      for (const a of rows) {
+        const ll = coordOf(a);
+        if (!a.k || !ll) continue;
+        cities.add(a.loc);
+        const mk = L.marker(ll, {
+          title: a.n, alt: a.n, keyboard: true,
+          icon: L.divIcon({ className: 'pin', html: `<span style="background:${famColor(a.fam)}"></span>`, iconSize: [14, 14] }),
+        }).bindPopup(`<strong>${esc(a.n)}</strong><div class="pop__m">${esc(a.d)}${a.loc ? `<br>${esc(a.loc)}` : ''}</div>
+          <button type="button" class="pop__b" data-bio>Read bio</button>`);
+        mk._key = a.k; mk._person = a;
+        mapState.markers.push(mk);
+      }
+      mapState.cluster.addLayers(mapState.markers);
+      el.querySelector('.wmap__note').textContent = `${mapState.markers.length} of ${rows.length} ambassadors pinned, ${cities.size} places`;
+      el.querySelector('.wmap__keys').innerHTML = FAMILIES.filter((f) => rows.some((a) => a.fam === f))
+        .map((f) => `<span><i style="background:${famColor(f)}"></i>${esc(f)}</span>`).join('');
+      mapState.active = undefined;
+    }
+    const active = state.cty || null;
+    if (active !== mapState.active) {
+      mapState.active = active;
+      el.classList.toggle('is-zoomed', !!active);
+      fitMap();
     }
   }
+
   function renderMap() {
     const rows = yearRows();
-    const byCountry = d3.rollups(rows.filter((a) => a.k), (v) => v, (a) => a.k).sort((a, b) => b[1].length - a[1].length);
+    const byCountry = d3.rollups(rows.filter((a) => a.k), (v) => v.length, (a) => a.k).sort((a, b) => b[1] - a[1]);
     $('#mapCountries').textContent = byCountry.length;
     hbars($('#regionBars'), d3.rollups(rows.filter((a) => a.reg), (v) => v.length, (a) => a.reg).sort((a, b) => b[1] - a[1]),
       { onClick: (k) => { state.reg = k; state.cty = ''; goDirectory(); } });
-    hbars($('#countryBars'), byCountry.slice(0, 10).map(([k, v]) => [k, v.length]),
-      { onClick: (k) => { state.cty = k; goDirectory(); } });
-    if (!world) return;
-
-    const W = 960, H = 470;
-    const proj = d3.geoNaturalEarth1().fitExtent([[6, 6], [W - 6, H - 6]], { type: 'FeatureCollection', features: world });
-    const path = d3.geoPath(proj);
-    const svg = d3.select('#world').attr('viewBox', `0 0 ${W} ${H}`);
-    const byName = new Map(world.map((f) => [f.properties.name, f]));
-    const has = new Set(byCountry.map(([k]) => NAME_FIX[k] || k));
-    svg.selectAll('path.land').data(world).join('path').attr('class', 'land').attr('d', path)
-      .classed('on', (f) => has.has(f.properties.name));
-
-    const r = d3.scaleSqrt().domain([0, d3.max(byCountry, (d) => d[1].length)]).range([0, 34]);
-    const bubbles = byCountry.map(([k, people]) => {
-      const f = byName.get(NAME_FIX[k] || k);
-      const ll = CENTRE[k] || (f && d3.geoCentroid(f));
-      if (!ll) return null;
-      const [x, y] = proj(ll);
-      const cities = d3.rollups(people.filter((a) => a.c), (v) => v.length, (a) => a.c).sort((a, b) => b[1] - a[1]).slice(0, 3);
-      return { k, n: people.length, x, y, r: Math.max(3.5, r(people.length)), cities };
-    }).filter(Boolean).sort((a, b) => b.n - a.n);
-
-    const g = svg.selectAll('g.bubs').data([0]).join('g').attr('class', 'bubs');
-    g.selectAll('circle.bub').data(bubbles, (d) => d.k).join('circle').attr('class', 'bub')
-      .attr('tabindex', 0).attr('role', 'button')
-      .attr('aria-label', (d) => `${d.k}: ${d.n} ambassadors`)
-      .classed('sel', (d) => d.k === state.cty)
-      .attr('cx', (d) => d.x).attr('cy', (d) => d.y)
-      .on('pointermove', (e, d) => showTip(e, `<b>${esc(d.k)}</b><br>${d.n} ambassador${d.n > 1 ? 's' : ''}${d.cities.length ? `<br>${d.cities.map(([c, n]) => `${esc(c)} ${n}`).join(', ')}` : ''}`))
-      .on('pointerleave', hideTip)
-      .on('click', (e, d) => { state.cty = d.k; goDirectory(); })
-      .on('keydown', (e, d) => { if (e.key === 'Enter') { state.cty = d.k; goDirectory(); } })
-      .transition().duration(reduced ? 0 : 600).attr('r', (d) => d.r);
-    g.selectAll('text.blbl').data(bubbles.filter((d) => d.r >= 11), (d) => d.k).join('text').attr('class', 'blbl')
-      .attr('x', (d) => d.x).attr('y', (d) => d.y).text((d) => d.n);
+    hbars($('#countryBars'), byCountry.slice(0, 10), { onClick: (k) => { state.cty = k; goDirectory(); } });
+    syncMap();
   }
 
   /* Patterns: flow between classes (fixed years, does not follow the year switch) */
@@ -347,7 +395,7 @@
   const photo = (a, cls = 'ph') => (safeUrl(a.img)
     ? `<img class="${cls}" src="${esc(a.img)}" alt="" loading="lazy" decoding="async" width="56" height="56" referrerpolicy="no-referrer" data-ini="${esc(initials(a.n))}">`
     : `<span class="${cls} ini" aria-hidden="true">${esc(initials(a.n))}</span>`);
-  const yearBadges = (a) => `<span class="yrs" aria-label="Classes: ${[...a.yrs].sort().join(', ')}">${YEARS.map((y) => `<span class="${a.yrs.has(y) ? 'on' : ''}">${String(y).slice(2)}</span>`).join('')}</span>`;
+  const yearBadges = (a) => !a.yrs.size ? '' : `<span class="yrs" aria-label="Classes: ${[...a.yrs].sort().join(', ')}">${YEARS.map((y) => `<span class="${a.yrs.has(y) ? 'on' : ''}">${String(y).slice(2)}</span>`).join('')}</span>`;
 
   function renderDirectory() {
     const rows = filtered();
@@ -360,7 +408,7 @@
     $('#grid').querySelectorAll('.person').forEach((b) => b.addEventListener('click', () => openDrawer(show[+b.dataset.i])));
     $('#moreBtn').hidden = rows.length <= state.shown;
     $('#moreBtn').textContent = `Show more (${fmt(rows.length - state.shown)} left)`;
-    $('#world') && d3.selectAll('#world .bub').classed('sel', (d) => d.k === state.cty);
+    syncMap();
     syncUrl();
   }
   function goDirectory() {
@@ -368,6 +416,138 @@
     renderFilters(); renderDirectory();
     $('#directory').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' });
   }
+
+  /* Visionaries: one person per entry, linked to their ambassador record by name key. */
+  const VIS = window.VIS || { cohorts: [], people: [], y2026: { named: [] } };
+  const VIS_BY_ID = new Map(VIS.people.map((v) => [v.id, v]));
+  const latestAmb = new Map();
+  ALL.forEach((a) => { if (!latestAmb.has(a.id) || latestAmb.get(a.id).y < a.y) latestAmb.set(a.id, a); });
+  const visState = { q: '', which: 'all' };
+  const shortYear = (y) => (y.length === 4 ? `'${y.slice(2)}` : `'16/17`);
+
+  // A Visionary opened in the drawer: their ambassador record if they have one, else a bare card.
+  function visPerson(v) {
+    const amb = latestAmb.get(v.id);
+    if (amb) return amb;
+    return { n: v.n, id: v.id, d: v.hof ? 'Tableau Visionary, Hall of Fame' : 'Tableau Visionary', fam: 'Tableau', loc: '', b: '', t: [], lang: [], ug: [], L: v.L, yrs: new Set(), img: '' };
+  }
+  const visSection = (a) => {
+    const v = VIS_BY_ID.get(a.id);
+    if (!v) return '';
+    return `<p class="d-sec">Tableau Visionary</p><div class="chips">${v.y.map((y) => `<span>${esc(y)}</span>`).join('')}${v.hof ? '<span class="hof">Hall of Fame</span>' : ''}</div>`;
+  };
+
+  function renderVisStats() {
+    const P = VIS.people;
+    const in25 = P.filter((v) => v.y.includes('2025'));
+    const amb26 = P.filter((v) => ALL.some((a) => a.y === 2026 && a.id === v.id)).length;
+    $('#visCount').textContent = P.length;
+    $('#visStats').innerHTML = [['2025 class', in25.length], ['Hall of Fame', P.filter((v) => v.hof).length], ['Five classes or more', P.filter((v) => v.y.length >= 5).length], ['Also 2026 ambassadors', amb26]]
+      .map(([k, v]) => `<div><dt>${k}</dt><dd>${fmt(v)}</dd></div>`).join('');
+  }
+
+  // The loom: columns are people (ordered by first class, then length of run), rows are class years.
+  function renderLoom() {
+    const C = VIS.cohorts, P = VIS.people;
+    const cw = 7.4, rh = 15, L = 54, T = 8, R = 40;
+    const W = L + P.length * cw + R, H = T + C.length * rh + 8;
+    const svg = d3.select('#loom').attr('viewBox', `0 0 ${W} ${H}`);
+    svg.selectAll('*').remove();
+    const cNew = css('--s3'), cBack = css('--s1'), cHof = css('--s2');
+    C.forEach((c, i) => {
+      const y = T + i * rh + rh / 2;
+      svg.append('line').attr('class', 'thread').attr('x1', L - 4).attr('x2', W - R + 4).attr('y1', y).attr('y2', y);
+      svg.append('text').attr('class', 'ax').attr('x', L - 10).attr('y', y + 4).attr('text-anchor', 'end').text(c);
+      svg.append('text').attr('class', 'dl').attr('x', W - R + 10).attr('y', y + 4).text(P.filter((v) => v.y.includes(c)).length);
+    });
+    const cols = svg.selectAll('g.col').data(P).join('g').attr('class', 'col')
+      .attr('transform', (v, i) => `translate(${L + i * cw},0)`)
+      .attr('tabindex', 0).attr('role', 'button')
+      .attr('aria-label', (v) => `${v.n}: ${v.y.join(', ')}${v.hof ? ', Hall of Fame' : ''}`)
+      .on('pointermove', (e, v) => showTip(e, `<b>${esc(v.n)}</b><br>${v.y.length} class${v.y.length > 1 ? 'es' : ''}: ${v.y.map(shortYear).join(' ')}${v.hof ? '<br>Hall of Fame' : ''}`))
+      .on('pointerleave', hideTip)
+      .on('click', (e, v) => openDrawer(visPerson(v)))
+      .on('keydown', (e, v) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(visPerson(v)); } });
+    cols.append('rect').attr('class', 'hit').attr('x', -1).attr('y', T - 2).attr('width', cw).attr('height', C.length * rh + 4).attr('rx', 3);
+    cols.each(function (v) {
+      const g = d3.select(this);
+      const rows = v.y.map((y) => C.indexOf(y)).sort((a, b) => a - b);
+      // A run of consecutive classes is joined by a thin stem.
+      for (let k = 1; k < rows.length; k++) {
+        if (rows[k] === rows[k - 1] + 1) g.append('line').attr('x1', cw / 2 - 1).attr('x2', cw / 2 - 1)
+          .attr('y1', T + rows[k - 1] * rh + rh / 2).attr('y2', T + rows[k] * rh + rh / 2)
+          .attr('stroke', v.hof ? cHof : cBack).attr('stroke-width', 2).attr('opacity', 0.55);
+      }
+      rows.forEach((r, k) => g.append('circle').attr('cx', cw / 2 - 1).attr('cy', T + r * rh + rh / 2).attr('r', 3)
+        .attr('fill', v.hof ? cHof : k === 0 ? cNew : cBack));
+    });
+    $('#loomLegend').innerHTML = `<span><i style="background:${cNew}"></i>First class</span><span><i style="background:${cBack}"></i>Returning</span><span><i style="background:${cHof}"></i>Hall of Fame member</span>`;
+  }
+
+  function renderVisBars() {
+    const C = VIS.cohorts, P = VIS.people;
+    const data = C.map((c) => {
+      const inC = P.filter((v) => v.y.includes(c));
+      const fresh = inC.filter((v) => v.y[0] === c).length;
+      return { c, total: inC.length, fresh, back: inC.length - fresh };
+    });
+    const W = 760, H = 230, L = 28, B = 26, T = 22;
+    const x = d3.scaleBand().domain(C).range([L, W]).padding(0.28);
+    const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d.total)]).nice().range([H - B, T]);
+    const svg = d3.select('#visBars').attr('viewBox', `0 0 ${W} ${H}`);
+    svg.selectAll('*').remove();
+    y.ticks(4).forEach((t) => {
+      svg.append('line').attr('class', 'gridl').attr('x1', L).attr('x2', W).attr('y1', y(t)).attr('y2', y(t));
+      svg.append('text').attr('class', 'ax').attr('x', L - 6).attr('y', y(t) + 4).attr('text-anchor', 'end').text(t);
+    });
+    const cBack = css('--s1'), cNew = css('--s3');
+    [['Returning', cBack], ['New that year', cNew]].forEach(([t, c], i) => {
+      svg.append('rect').attr('x', L + i * 130).attr('y', 0).attr('width', 10).attr('height', 10).attr('rx', 2).attr('fill', c);
+      svg.append('text').attr('class', 'dl2').attr('x', L + i * 130 + 16).attr('y', 9).text(t);
+    });
+    data.forEach((d) => {
+      const tip = (e) => showTip(e, `<b>${d.c}</b><br>${d.total} Visionaries<br>${d.back} returning, ${d.fresh} new`);
+      const g = svg.append('g').on('pointermove', tip).on('pointerleave', hideTip);
+      g.append('rect').attr('x', x(d.c)).attr('width', x.bandwidth()).attr('y', y(d.back)).attr('height', y(0) - y(d.back)).attr('fill', cBack).attr('rx', 2);
+      g.append('rect').attr('x', x(d.c)).attr('width', x.bandwidth()).attr('y', y(d.total)).attr('height', Math.max(0, y(d.back) - y(d.total) - 2)).attr('fill', cNew).attr('rx', 3);
+      svg.append('text').attr('class', 'dl').attr('x', x(d.c) + x.bandwidth() / 2).attr('y', y(d.total) - 5).attr('text-anchor', 'middle').text(d.total);
+      svg.append('text').attr('class', 'ax').attr('x', x(d.c) + x.bandwidth() / 2).attr('y', H - 8).attr('text-anchor', 'middle').text(shortYear(d.c));
+    });
+  }
+
+  function renderVis26() {
+    const n = VIS.y2026 || { named: [] };
+    $('#vis26Note').textContent = `Tableau announced ${n.announced} Visionaries for 2026 on 18 March 2026. These ${n.named.length} are named in the announcement; the full list is on tableau.com.`;
+    const key = (name) => { const t = name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z ]/g, '').split(/\s+/).filter(Boolean); return `${t[0]}-${t[t.length - 1]}`; };
+    $('#vis26').innerHTML = n.named.map((name) => `<button type="button" data-k="${esc(key(name))}" data-n="${esc(name)}">${esc(name)}</button>`).join('')
+      + (n.source ? `<a href="${esc(n.source)}" target="_blank" rel="noopener noreferrer">Full announcement</a>` : '');
+    $('#vis26').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+      const v = VIS_BY_ID.get(b.dataset.k);
+      const amb = latestAmb.get(b.dataset.k);
+      openDrawer(amb || (v ? visPerson(v) : { n: b.dataset.n, id: b.dataset.k, d: '2026 Tableau Visionary', fam: 'Tableau', loc: '', b: '', t: [], lang: [], ug: [], L: {}, yrs: new Set(), img: '' }));
+    }));
+    const runs = d3.rollups(VIS.people.filter((v) => !v.y.includes('2025')), (g) => g.length, (v) => v.y.length).sort((a, b) => a[0] - b[0]);
+    hbars($('#visLong'), runs.map(([k, n]) => [`${k} class${k > 1 ? 'es' : ''}`, n]));
+  }
+
+  function renderVisGrid() {
+    $('#visSeg').innerHTML = [['all', 'All'], ['2025', '2025 class'], ['hof', 'Hall of Fame']]
+      .map(([k, l]) => `<button type="button" role="radio" aria-checked="${visState.which === k}" data-k="${k}">${l}</button>`).join('');
+    $('#visSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { visState.which = b.dataset.k; renderVisGrid(); }));
+    const q = visState.q.toLowerCase().trim();
+    const rows = VIS.people.filter((v) => (visState.which === 'all' || (visState.which === 'hof' ? v.hof : v.y.includes('2025')))
+      && (!q || v.n.toLowerCase().includes(q))).sort((a, b) => d3.ascending(a.n, b.n));
+    $('#visGrid').innerHTML = rows.map((v, i) => {
+      const p = visPerson(v);
+      return `<li><button type="button" class="person" data-i="${i}" style="--c:${v.hof ? 'var(--s2)' : 'var(--s1)'}">${photo(p)}<span><span class="pn">${esc(v.n)}</span>
+        <span class="pm">${v.y.length > 1 ? `${v.y.length} classes, ${esc(v.y[0])} to ${esc(v.y[v.y.length - 1])}` : `${esc(v.y[0])} only`}</span>
+        <span class="yrs">${v.hof ? '<span class="hof">HOF</span>' : ''}${p.yrs.size ? '<span class="on">Ambassador</span>' : ''}</span></span></button></li>`;
+    }).join('') || '<li class="note">Nobody matches.</li>';
+    $('#visGrid').querySelectorAll('.person').forEach((b) => b.addEventListener('click', () => openDrawer(visPerson(rows[+b.dataset.i]))));
+  }
+  $('#vq').addEventListener('input', (e) => { visState.q = e.target.value; renderVisGrid(); });
+
+  function renderVisionaries() { renderVisStats(); renderLoom(); renderVisBars(); renderVis26(); renderVisGrid(); }
 
   /* Bio drawer */
   const drawer = $('#drawer');
@@ -381,6 +561,7 @@
       ${a.b ? `<p class="d-bio">${esc(a.b)}</p>` : '<p class="note">No bio shared yet.</p>'}
       ${a.t.length ? `<p class="d-sec">Talk to me about</p><div class="chips">${a.t.map((t) => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
       ${a.lang.length ? `<p class="d-sec">Languages</p><div class="chips">${a.lang.map((t) => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
+      ${visSection(a)}
       ${groups ? `<p class="d-sec">User groups</p><div class="chips">${groups}</div>` : ''}
       ${links ? `<p class="d-sec">Find them</p><div class="chips">${links}</div>` : ''}`;
     if (!drawer.open) drawer.showModal();
@@ -415,8 +596,8 @@
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 
   function renderAll() {
-    renderYearSeg(); renderHero(); renderMap(); renderFlow(); renderSlope(); renderYearPatterns(); renderFilters(); renderDirectory();
+    renderYearSeg(); renderHero(); renderMap(); renderFlow(); renderSlope(); renderYearPatterns(); renderFilters(); renderDirectory(); renderVisionaries();
   }
   renderAll();
-  loadWorld().then(renderMap);
+  loadGeo().then(() => { mapState.rowsKey = null; syncMap(); });
 })();
