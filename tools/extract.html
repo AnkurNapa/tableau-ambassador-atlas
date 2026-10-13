@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script type="module" src="https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js"></script></head>
+<body><tableau-viz id="v" width="1200" height="900" hide-tabs toolbar="hidden"></tableau-viz>
+<script>
+document.getElementById('v').src='https://public.tableau.com/views/'+new URLSearchParams(location.search).get('v');
+window.__out=null;
+document.getElementById('v').addEventListener('firstinteractive', async e=>{
+  try{
+  const viz=e.target, sheet=viz.workbook.activeSheet, out={type:sheet.sheetType,name:sheet.name,sheets:{}};
+  const wss = sheet.worksheets || [sheet];
+  for (const ws of wss){
+    try{
+      const reader=await ws.getSummaryDataReaderAsync(10000,{ignoreSelection:true});
+      const dt=await reader.getAllPagesAsync(); await reader.releaseAsync();
+      out.sheets[ws.name]={cols:dt.columns.map(c=>c.fieldName),rows:dt.data.map(r=>r.map(c=>c.formattedValue))};
+    }catch(err){out.sheets[ws.name]={error:String(err)}}
+  }
+  try{ out.filters={}; for(const ws of wss){ const f=await ws.getFiltersAsync(); out.filters[ws.name]=f.map(x=>({field:x.fieldName,type:x.filterType,vals:(x.appliedValues||[]).map(v=>v.formattedValue).slice(0,80)})) } }catch(err){out.filtersErr=String(err)}
+  try{ out.params=(await viz.workbook.getParametersAsync()).map(p=>({name:p.name,val:p.currentValue.formattedValue,allowed:(p.allowableValues.allowableValues||[]).map(v=>v.formattedValue)})) }catch(err){out.paramsErr=String(err)}
+  out.log=[]; let best=null;
+  for(const ws of wss){ try{
+    const fs=await ws.getFiltersAsync();
+    for(const f of fs){ if(f.fieldName.startsWith('AGG(')||/page|show|rank|index/i.test(f.fieldName)){ try{await ws.clearFilterAsync(f.fieldName); out.log.push(ws.name+' cleared '+f.fieldName)}catch(e){} } }
+    const ts=await ws.getUnderlyingTablesAsync(); const r=await ws.getUnderlyingTableDataReaderAsync(ts[0].id,10000,{ignoreSelection:true,includeAllColumns:true}); const dt=await r.getAllPagesAsync(); await r.releaseAsync();
+    out.log.push(ws.name+' rows '+dt.data.length+' cols '+dt.columns.length);
+    if(!best||dt.data.length*dt.columns.length>best.n){best={n:dt.data.length*dt.columns.length,sheet:ws.name,cols:dt.columns.map(c=>c.fieldName),rows:dt.data.map(x=>x.map(c=>c.formattedValue))}}
+  }catch(err){out.log.push(ws.name+' err '+err)} }
+  if(best){out.uSheet=best.sheet;out.uCols=best.cols;out.under=best.rows}
+  window.__out=out;
+  }catch(err){window.__out={fatal:String(err)}}
+});
+</script></body></html>
