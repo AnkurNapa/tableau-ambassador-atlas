@@ -44,15 +44,25 @@
     year: YEARS.includes(+params.get('year')) ? +params.get('year') : 2026,
     q: params.get('q') || '', des: params.get('des') || '', reg: params.get('reg') || '',
     cty: params.get('cty') || '', lang: params.get('lang') || '', ret: params.get('ret') === '1', shown: PAGE,
+    layer: ['amb', 'vis'].includes(params.get('layer')) ? params.get('layer') : 'all',
   };
   const syncUrl = () => {
     const p = new URLSearchParams();
     if (state.year !== 2026) p.set('year', state.year);
     ['q', 'des', 'reg', 'cty', 'lang'].forEach((k) => state[k] && p.set(k, state[k]));
     if (state.ret) p.set('ret', '1');
+    if (state.layer !== 'all') p.set('layer', state.layer);
     history.replaceState(null, '', p.toString() ? `?${p}` : location.pathname);
   };
-  const yearRows = () => ALL.filter((a) => a.y === state.year);
+  // Country and region are a global scope: every section on the page reads them.
+  const inScope = (p) => (!state.cty || p.k === state.cty) && (!state.reg || p.reg === state.reg);
+  const allYearRows = () => ALL.filter((a) => a.y === state.year);
+  const yearRows = () => allYearRows().filter(inScope);
+  const scopeLabel = () => state.cty || state.reg || '';
+  function setScope(patch) {
+    Object.assign(state, { cty: '', reg: '' }, patch, { shown: PAGE });
+    renderAll();
+  }
 
   /* Tooltip */
   const tip = $('#tip');
@@ -66,10 +76,10 @@
   const personTip = (a) => `<b>${esc(a.n)}</b><br>${esc(a.d)}${a.loc ? `<br>${esc(a.loc)}` : ''}${a.back ? '<br>Returning ambassador' : a.back === false ? '<br>First year' : ''}`;
 
   /* Horizontal bar list, used by several cards */
-  function hbars(el, rows, { onClick, colorOf, max } = {}) {
+  function hbars(el, rows, { onClick, colorOf, max, selected } = {}) {
     const m = max || d3.max(rows, (r) => r[1]) || 1;
     el.innerHTML = rows.map(([label, v, extra]) => `
-      <button type="button" class="hb${colorOf ? ' dot' : ''}" ${onClick ? 'data-click' : 'tabindex="-1"'} data-k="${esc(label)}" ${colorOf ? `style="--c:${colorOf(label, extra)}"` : ''} aria-label="${esc(label)}: ${v}">
+      <button type="button" class="hb${colorOf ? ' dot' : ''}${selected && selected === label ? ' sel' : ''}" ${onClick ? 'data-click' : 'tabindex="-1"'} data-k="${esc(label)}" ${colorOf ? `style="--c:${colorOf(label, extra)}"` : ''} aria-label="${esc(label)}: ${v}">
         <span class="l">${esc(label)}</span><span class="t"><span class="f" style="transform:scaleX(${v / m})"></span></span><span class="v">${fmt(v)}</span>
       </button>`).join('');
     if (onClick) el.querySelectorAll('[data-click]').forEach((b) => b.addEventListener('click', () => onClick(b.dataset.k)));
@@ -80,7 +90,7 @@
     const seg = $('#yearSeg');
     seg.innerHTML = YEARS.map((y) => `<button type="button" role="radio" aria-checked="${y === state.year}" data-y="${y}">${y}</button>`).join('');
     seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-      state.year = +b.dataset.y; state.des = ''; state.cty = ''; state.lang = ''; state.reg = ''; state.shown = PAGE;
+      state.year = +b.dataset.y; state.des = ''; state.lang = ''; state.shown = PAGE;
       if (state.year === 2024) state.ret = false;
       renderAll();
     }));
@@ -89,7 +99,7 @@
   /* Hero */
   function renderHero() {
     const rows = yearRows();
-    $('#heroYear').textContent = state.year;
+    $('#heroYear').textContent = `${state.year}${scopeLabel() ? ` in ${scopeLabel()}` : ''}`;
     $('#heroCount').textContent = fmt(rows.length);
     const countries = new Set(rows.map((a) => a.k).filter(Boolean)).size;
     const langs = new Set(rows.flatMap((a) => a.lang)).size;
@@ -97,8 +107,8 @@
     const stats = [
       ['Countries', countries],
       langs ? ['Languages', langs] : ['Programmes', new Set(rows.map((a) => a.d)).size],
-      state.year === 2024 ? ['Regions', new Set(rows.map((a) => a.reg).filter(Boolean)).size] : ['Came back', pct(back / rows.length)],
-      state.year === 2024 ? ['With a bio', pct(rows.filter((a) => a.b).length / rows.length)] : ['Run a user group', fmt(rows.filter((a) => a.ug.length).length)],
+      state.year === 2024 ? ['Regions', new Set(rows.map((a) => a.reg).filter(Boolean)).size] : ['Came back', rows.length ? pct(back / rows.length) : '0%'],
+      state.year === 2024 ? ['With a bio', rows.length ? pct(rows.filter((a) => a.b).length / rows.length) : '0%'] : ['Run a user group', fmt(rows.filter((a) => a.ug.length).length)],
     ];
     $('#stats').innerHTML = stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${typeof v === 'number' ? fmt(v) : v}</dd></div>`).join('');
     renderConstellation(rows);
@@ -112,6 +122,7 @@
         .sort((a, b) => (b.back === true) - (a.back === true) || d3.ascending(a.n, b.n));
       return { f, people, r: STEP * Math.sqrt(people.length) + 26 };
     }).filter((g) => g.people.length);
+    if (!groups.length) { svg.selectAll('*').remove(); $('#constCap').textContent = 'Nobody in this class matches the filter.'; return; }
     d3.packSiblings(groups);
     const [x0, x1] = d3.extent(groups.flatMap((g) => [g.x - g.r, g.x + g.r]));
     const [y0, y1] = d3.extent(groups.flatMap((g) => [g.y - g.r, g.y + g.r]));
@@ -170,20 +181,27 @@
   const coordOf = (a) => GEO[a.loc] || GEO[a.k] || null;
   const mapState = { map: null, cluster: null, markers: [], rowsKey: null, active: undefined };
 
-  function pickCountry(k) {
-    state.cty = k || ''; state.shown = PAGE;
-    renderFilters(); renderDirectory();
-  }
+  const pickCountry = (k) => setScope({ cty: k || '' });
 
   function buildMap() {
     const el = $('#world');
     if (!window.L) { el.innerHTML = '<p class="note">The map could not load. The bars beside it show the same counts.</p>'; return null; }
-    el.innerHTML = `<div class="lmap" role="region" aria-label="World map of ambassadors">
+    el.innerHTML = `<div class="seg wmap__layers" role="radiogroup" aria-label="Who to show on the map"></div>
+      <div class="lmap" role="region" aria-label="World map of ambassadors and Visionaries">
         <button class="wmap__back" type="button">&larr; Back to world</button></div>
       <div class="wmap__legend"><span class="wmap__keys"></span><span class="wmap__note"></span></div>`;
     const map = L.map(el.querySelector('.lmap'), { scrollWheelZoom: false, worldCopyJump: true }).setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-    const cluster = L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, zoomToBoundsOnClick: false }).addTo(map);
+    // Cluster bubbles show the headcount, plus a diamond badge for any Visionaries inside.
+    const cluster = L.markerClusterGroup({
+      showCoverageOnHover: false, maxClusterRadius: 45, zoomToBoundsOnClick: false,
+      iconCreateFunction: (c) => {
+        const ms = c.getAllChildMarkers();
+        const v = ms.filter((mk) => mk._vis).length;
+        return L.divIcon({ className: 'marker-cluster', iconSize: L.point(40, 40),
+          html: `<div><span>${ms.length}</span></div>${v ? `<b class="cv" title="${v} Visionaries">${v}</b>` : ''}` });
+      },
+    }).addTo(map);
     let wasHidden = true;
     new ResizeObserver(() => {
       map.invalidateSize();
@@ -194,7 +212,7 @@
     const back = el.querySelector('.wmap__back');
     L.DomEvent.disableClickPropagation(back);
     back.addEventListener('click', () => pickCountry(''));
-    // A cluster that sits inside one country filters to it; a mixed one zooms in.
+    // A cluster that sits inside one country filters the whole page to it; a mixed one zooms in.
     cluster.on('clusterclick', (e) => {
       const keys = new Set(e.layer.getAllChildMarkers().map((mk) => mk._key));
       const only = keys.size === 1 ? [...keys][0] : null;
@@ -202,9 +220,10 @@
       else e.layer.zoomToBounds({ padding: [30, 30] });
     });
     map.on('popupopen', (e) => {
-      const btn = e.popup.getElement().querySelector('[data-bio]');
-      const person = e.popup._source && e.popup._source._person;
-      if (btn && person) btn.addEventListener('click', () => openDrawer(person));
+      const el2 = e.popup.getElement();
+      const mk = e.popup._source;
+      el2.querySelector('[data-bio]')?.addEventListener('click', () => openDrawer(mk._person));
+      el2.querySelector('[data-cty]')?.addEventListener('click', () => { map.closePopup(); pickCountry(mk._key); });
     });
     return Object.assign(mapState, { map, cluster });
   }
@@ -217,32 +236,57 @@
     else map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
   }
 
+  // Everyone the map can show for the selected year: that class of ambassadors plus every
+  // Visionary since 2012. Someone who is both gets one pin, drawn as a Visionary diamond.
+  function mapPeople() {
+    const amb = state.layer === 'vis' ? [] : allYearRows().map((a) => ({ person: a, k: a.k, loc: a.loc, fam: a.fam, vis: VIS_BY_ID.get(a.id), amb: true }));
+    const seen = new Set(amb.map((m) => m.person.id));
+    const vis = state.layer === 'amb' ? [] : VIS.people.filter((v) => !seen.has(v.id))
+      .map((v) => ({ person: visPerson(v), k: v.k, loc: v.loc, fam: null, vis: v, amb: false }));
+    return [...amb, ...vis];
+  }
+
+  function renderLayerSeg(el) {
+    const seg = el.querySelector('.wmap__layers');
+    seg.innerHTML = [['all', 'Everyone'], ['amb', `${state.year} ambassadors`], ['vis', 'Visionaries']]
+      .map(([k, l]) => `<button type="button" role="radio" aria-checked="${state.layer === k}" data-k="${k}">${l}</button>`).join('');
+    seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { state.layer = b.dataset.k; syncMap(); syncUrl(); }));
+  }
+
   function syncMap() {
     if (!mapState.map && !buildMap()) return;
     const el = $('#world');
-    const rows = yearRows();
-    const rowsKey = `${state.year}-${rows.length}`;
+    renderLayerSeg(el);
+    const people = mapPeople();
+    const rowsKey = `${state.year}-${state.layer}-${people.length}-${Object.keys(GEO).length}`;
     if (rowsKey !== mapState.rowsKey) {
       mapState.rowsKey = rowsKey;
       mapState.cluster.clearLayers();
       mapState.markers = [];
-      const cities = new Set();
-      for (const a of rows) {
-        const ll = coordOf(a);
-        if (!a.k || !ll) continue;
-        cities.add(a.loc);
+      const places = new Set();
+      let nAmb = 0, nVis = 0;
+      for (const m of people) {
+        const ll = GEO[m.loc] || GEO[m.k];
+        if (!m.k || !ll) continue;
+        places.add(m.loc || m.k);
+        if (m.amb) nAmb += 1; else nVis += 1;
+        if (m.amb && m.vis) nVis += 1;
+        const colour = m.fam ? famColor(m.fam) : 'var(--ink-1)';
+        const v = m.vis;
+        const role = m.amb ? m.person.d : (v.hof ? 'Tableau Visionary, Hall of Fame' : 'Tableau Visionary');
         const mk = L.marker(ll, {
-          title: a.n, alt: a.n, keyboard: true,
-          icon: L.divIcon({ className: 'pin', html: `<span style="background:${famColor(a.fam)}"></span>`, iconSize: [14, 14] }),
-        }).bindPopup(`<strong>${esc(a.n)}</strong><div class="pop__m">${esc(a.d)}${a.loc ? `<br>${esc(a.loc)}` : ''}</div>
-          <button type="button" class="pop__b" data-bio>Read bio</button>`);
-        mk._key = a.k; mk._person = a;
+          title: m.person.n, alt: m.person.n, keyboard: true,
+          icon: L.divIcon({ className: `pin${v ? ' pin--vis' : ''}`, html: `<span style="background:${colour}"></span>`, iconSize: [16, 16] }),
+        }).bindPopup(`<strong>${esc(m.person.n)}</strong><div class="pop__m">${esc(role)}${m.loc ? `<br>${esc(m.loc)}` : ''}${v ? `<br>Visionary ${esc(v.y[0])}${v.y.length > 1 ? ` to ${esc(v.y[v.y.length - 1])}` : ''}` : ''}</div>
+          <button type="button" class="pop__b" data-bio>Read bio</button> <button type="button" class="pop__b pop__b--ghost" data-cty>Filter to ${esc(m.k)}</button>`);
+        mk._key = m.k; mk._person = m.person; mk._vis = !!v;
         mapState.markers.push(mk);
       }
       mapState.cluster.addLayers(mapState.markers);
-      el.querySelector('.wmap__note').textContent = `${mapState.markers.length} of ${rows.length} ambassadors pinned, ${cities.size} places`;
-      el.querySelector('.wmap__keys').innerHTML = FAMILIES.filter((f) => rows.some((a) => a.fam === f))
-        .map((f) => `<span><i style="background:${famColor(f)}"></i>${esc(f)}</span>`).join('');
+      el.querySelector('.wmap__note').textContent = `${nAmb ? `${nAmb} ambassadors` : ''}${nAmb && nVis ? ' and ' : ''}${nVis ? `${nVis} Visionaries` : ''} pinned in ${places.size} places`;
+      const fams = state.layer === 'vis' ? [] : FAMILIES.filter((f) => allYearRows().some((a) => a.fam === f));
+      el.querySelector('.wmap__keys').innerHTML = fams.map((f) => `<span><i style="background:${famColor(f)}"></i>${esc(f)}</span>`).join('')
+        + (state.layer === 'amb' ? '' : '<span><i class="dia"></i>Visionary (diamond)</span>');
       mapState.active = undefined;
     }
     const active = state.cty || null;
@@ -254,18 +298,29 @@
   }
 
   function renderMap() {
-    const rows = yearRows();
+    const rows = allYearRows();
     const byCountry = d3.rollups(rows.filter((a) => a.k), (v) => v.length, (a) => a.k).sort((a, b) => b[1] - a[1]);
     $('#mapCountries').textContent = byCountry.length;
-    hbars($('#regionBars'), d3.rollups(rows.filter((a) => a.reg), (v) => v.length, (a) => a.reg).sort((a, b) => b[1] - a[1]),
-      { onClick: (k) => { state.reg = k; state.cty = ''; goDirectory(); } });
-    hbars($('#countryBars'), byCountry.slice(0, 10), { onClick: (k) => { state.cty = k; goDirectory(); } });
+    const regs = d3.rollups(rows.filter((a) => a.reg), (v) => v.length, (a) => a.reg).sort((a, b) => b[1] - a[1]);
+    hbars($('#regionBars'), regs, { onClick: (k) => setScope(state.reg === k ? {} : { reg: k }), selected: state.reg });
+    hbars($('#countryBars'), byCountry.slice(0, 10), { onClick: (k) => setScope(state.cty === k ? {} : { cty: k }), selected: state.cty });
     syncMap();
+  }
+
+  /* Global filter bar */
+  function renderScope() {
+    const bar = $('#scope');
+    const label = scopeLabel();
+    bar.hidden = !label;
+    if (!label) return;
+    const nA = yearRows().length, nV = VIS.people.filter(inScope).length;
+    bar.innerHTML = `<span>Whole page filtered to <b>${esc(label)}</b>: ${nA} ${state.year} ambassador${nA === 1 ? '' : 's'}, ${nV} Visionar${nV === 1 ? 'y' : 'ies'}.</span><button type="button" class="link-btn" id="scopeClear">Clear filter</button>`;
+    $('#scopeClear').addEventListener('click', () => setScope({}));
   }
 
   /* Patterns: flow between classes (fixed years, does not follow the year switch) */
   function renderFlow() {
-    const ids = (y) => new Set(ALL.filter((a) => a.y === y).map((a) => a.id));
+    const ids = (y) => new Set(ALL.filter((a) => a.y === y && inScope(a)).map((a) => a.id));
     const s = YEARS.map(ids);
     const rows = YEARS.map((y, i) => {
       const total = s[i].size;
@@ -274,10 +329,12 @@
       return { y, total, back, fresh: back === null ? null : total - back, left };
     });
     const all3 = [...s[2]].filter((id) => s[0].has(id) && s[1].has(id)).length;
-    $('#flowNote').textContent = `${rows[2].back} of the ${rows[1].total} ambassadors from 2025 came back in 2026 (${pct(rows[2].back / rows[1].total)}). ${all3} people have been in all three classes.`;
+    $('#flowNote').textContent = rows[1].total
+      ? `${rows[2].back} of the ${rows[1].total} ambassadors from 2025${scopeLabel() ? ` in ${scopeLabel()}` : ''} came back in 2026 (${pct(rows[2].back / rows[1].total)}). ${all3} people have been in all three classes.`
+      : 'Nobody here in 2025 to compare.';
 
     const W = 760, rowH = 46, top = 22, H = top + rows.length * rowH + 10, L = 54, R = 120;
-    const x = d3.scaleLinear().domain([0, d3.max(rows, (d) => d.total)]).range([0, W - L - R]);
+    const x = d3.scaleLinear().domain([0, d3.max(rows, (d) => d.total) || 1]).range([0, W - L - R]);
     const svg = d3.select('#flow').attr('viewBox', `0 0 ${W} ${H}`);
     svg.selectAll('*').remove();
     const cBack = css('--s1'), cNew = css('--s3'), cUnk = css('--ink-3');
@@ -306,12 +363,14 @@
 
   /* Patterns: slope chart by region (fixed years) */
   function renderSlope() {
-    const regions = [...new Set(ALL.map((a) => a.reg).filter(Boolean))];
-    const data = regions.map((r) => ({ r, v: YEARS.map((y) => ALL.filter((a) => a.y === y && a.reg === r).length) }))
+    const series = state.cty ? [state.cty] : [...new Set(ALL.map((a) => a.reg).filter(Boolean))];
+    const field = state.cty ? 'k' : 'reg';
+    const data = series.map((r) => ({ r, v: YEARS.map((y) => ALL.filter((a) => a.y === y && a[field] === r).length) }))
       .sort((a, b) => b.v[2] - a.v[2]);
+    $('#slopeTitle').textContent = state.cty ? `Class size in ${state.cty}, 2024 to 2026` : 'Class size by region, 2024 to 2026';
     const W = 380, H = 330, L = 30, R = 128, T = 18, B = 40;
     const x = d3.scalePoint().domain(YEARS).range([L, W - R]);
-    const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d3.max(d.v))]).nice().range([H - B, T]);
+    const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d3.max(d.v)) || 1]).nice().range([H - B, T]);
     const svg = d3.select('#slope').attr('viewBox', `0 0 ${W} ${H}`);
     svg.selectAll('*').remove();
     YEARS.forEach((yr) => {
@@ -324,7 +383,8 @@
     const lab = data.map((d) => ({ d, y: y(d.v[2]) })).sort((a, b) => a.y - b.y);
     for (let k = 1; k < lab.length; k++) if (lab[k].y - lab[k - 1].y < 14) lab[k].y = lab[k - 1].y + 14;
     const gs = svg.selectAll('g.reg').data(data).join('g').attr('class', 'reg');
-    gs.append('path').attr('d', (d) => line(d.v)).attr('fill', 'none').attr('stroke', ink).attr('stroke-width', 2);
+    const base = (d) => (state.reg && d.r === state.reg) || state.cty ? hi : ink;
+    gs.append('path').attr('d', (d) => line(d.v)).attr('fill', 'none').attr('stroke', base).attr('stroke-width', (d) => (base(d) === hi ? 3 : 2));
     gs.selectAll('circle').data((d) => d.v.map((v, i) => ({ v, i, d }))).join('circle')
       .attr('cx', (p) => x(YEARS[p.i])).attr('cy', (p) => y(p.v)).attr('r', 4).attr('fill', ink)
       .attr('stroke', css('--card')).attr('stroke-width', 2);
@@ -338,11 +398,11 @@
         showTip(e, `<b>${esc(d.r)}</b><br>${YEARS.map((yr, i) => `${yr}: ${d.v[i]}`).join('<br>')}`);
       })
       .on('pointerleave', () => {
-        gs.select('path').attr('stroke', ink).attr('stroke-width', 2).attr('opacity', 1);
+        gs.select('path').attr('stroke', base).attr('stroke-width', (d) => (base(d) === hi ? 3 : 2)).attr('opacity', 1);
         gs.selectAll('circle').attr('fill', ink);
         hideTip();
       })
-      .on('click', (e, d) => { state.reg = d.r; state.cty = ''; goDirectory(); });
+      .on('click', (e, d) => { if (!state.cty) setScope(state.reg === d.r ? {} : { reg: d.r }); });
   }
 
   /* Patterns that follow the year switch */
@@ -376,8 +436,8 @@
   function renderFilters() {
     const rows = yearRows();
     fillSelect($('#fDes'), 'All programmes', rows, (a) => [a.d], state.des);
-    fillSelect($('#fReg'), 'All regions', rows, (a) => [a.reg], state.reg);
-    fillSelect($('#fCty'), 'All countries', rows, (a) => [a.k], state.cty);
+    fillSelect($('#fReg'), 'All regions', allYearRows(), (a) => [a.reg], state.reg);
+    fillSelect($('#fCty'), 'All countries', allYearRows(), (a) => [a.k], state.cty);
     fillSelect($('#fLang'), 'All languages', rows, (a) => a.lang, state.lang);
     $('#fLang').disabled = state.year === 2024;
     $('#fRet').disabled = state.year === 2024;
@@ -429,7 +489,9 @@
   function visPerson(v) {
     const amb = latestAmb.get(v.id);
     if (amb) return amb;
-    return { n: v.n, id: v.id, d: v.hof ? 'Tableau Visionary, Hall of Fame' : 'Tableau Visionary', fam: 'Tableau', loc: '', b: '', t: [], lang: [], ug: [], L: v.L, yrs: new Set(), img: '' };
+    const tp = v.tp || {};
+    const role = [v.hof ? 'Tableau Visionary, Hall of Fame' : 'Tableau Visionary', [tp.title, tp.org].filter(Boolean).join(', ')].filter(Boolean).join('. ');
+    return { n: v.n, id: v.id, d: role, fam: 'Tableau', loc: v.loc || '', b: tp.bio || '', t: [], lang: [], ug: [], L: v.L, yrs: new Set(), img: tp.img || '' };
   }
   const visSection = (a) => {
     const v = VIS_BY_ID.get(a.id);
@@ -437,28 +499,30 @@
     return `<p class="d-sec">Tableau Visionary</p><div class="chips">${v.y.map((y) => `<span>${esc(y)}</span>`).join('')}${v.hof ? '<span class="hof">Hall of Fame</span>' : ''}</div>`;
   };
 
+  const VP = () => VIS.people.filter(inScope);
   function renderVisStats() {
-    const P = VIS.people;
+    const P = VP();
     const in25 = P.filter((v) => v.y.includes('2025'));
     const amb26 = P.filter((v) => ALL.some((a) => a.y === 2026 && a.id === v.id)).length;
-    $('#visCount').textContent = P.length;
+    $('#visTitle').textContent = `${P.length} Visionar${P.length === 1 ? 'y' : 'ies'} since 2012${scopeLabel() ? ` in ${scopeLabel()}` : ''}`;
     $('#visStats').innerHTML = [['2025 class', in25.length], ['Hall of Fame', P.filter((v) => v.hof).length], ['Five classes or more', P.filter((v) => v.y.length >= 5).length], ['Also 2026 ambassadors', amb26]]
       .map(([k, v]) => `<div><dt>${k}</dt><dd>${fmt(v)}</dd></div>`).join('');
   }
 
   // The loom: columns are people (ordered by first class, then length of run), rows are class years.
   function renderLoom() {
-    const C = VIS.cohorts, P = VIS.people;
+    const C = VIS.cohorts, P = VP();
     const cw = 7.4, rh = 15, L = 54, T = 8, R = 40;
-    const W = L + P.length * cw + R, H = T + C.length * rh + 8;
+    // Fixed column width: a filtered loom keeps its scale instead of blowing up a few columns.
+    const W = Math.max(L + P.length * cw + R, 1100), H = T + C.length * rh + 8;
     const svg = d3.select('#loom').attr('viewBox', `0 0 ${W} ${H}`);
     svg.selectAll('*').remove();
     const cNew = css('--s3'), cBack = css('--s1'), cHof = css('--s2');
     C.forEach((c, i) => {
       const y = T + i * rh + rh / 2;
-      svg.append('line').attr('class', 'thread').attr('x1', L - 4).attr('x2', W - R + 4).attr('y1', y).attr('y2', y);
+      svg.append('line').attr('class', 'thread').attr('x1', L - 4).attr('x2', L + P.length * cw + 4).attr('y1', y).attr('y2', y);
       svg.append('text').attr('class', 'ax').attr('x', L - 10).attr('y', y + 4).attr('text-anchor', 'end').text(c);
-      svg.append('text').attr('class', 'dl').attr('x', W - R + 10).attr('y', y + 4).text(P.filter((v) => v.y.includes(c)).length);
+      svg.append('text').attr('class', 'dl').attr('x', L + P.length * cw + 10).attr('y', y + 4).text(P.filter((v) => v.y.includes(c)).length);
     });
     const cols = svg.selectAll('g.col').data(P).join('g').attr('class', 'col')
       .attr('transform', (v, i) => `translate(${L + i * cw},0)`)
@@ -485,7 +549,7 @@
   }
 
   function renderVisBars() {
-    const C = VIS.cohorts, P = VIS.people;
+    const C = VIS.cohorts, P = VP();
     const data = C.map((c) => {
       const inC = P.filter((v) => v.y.includes(c));
       const fresh = inC.filter((v) => v.y[0] === c).length;
@@ -493,10 +557,10 @@
     });
     const W = 760, H = 230, L = 28, B = 26, T = 22;
     const x = d3.scaleBand().domain(C).range([L, W]).padding(0.28);
-    const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d.total)]).nice().range([H - B, T]);
+    const y = d3.scaleLinear().domain([0, d3.max(data, (d) => d.total) || 1]).nice().range([H - B, T]);
     const svg = d3.select('#visBars').attr('viewBox', `0 0 ${W} ${H}`);
     svg.selectAll('*').remove();
-    y.ticks(4).forEach((t) => {
+    y.ticks(4).filter(Number.isInteger).forEach((t) => {
       svg.append('line').attr('class', 'gridl').attr('x1', L).attr('x2', W).attr('y1', y(t)).attr('y2', y(t));
       svg.append('text').attr('class', 'ax').attr('x', L - 6).attr('y', y(t) + 4).attr('text-anchor', 'end').text(t);
     });
@@ -526,7 +590,7 @@
       const amb = latestAmb.get(b.dataset.k);
       openDrawer(amb || (v ? visPerson(v) : { n: b.dataset.n, id: b.dataset.k, d: '2026 Tableau Visionary', fam: 'Tableau', loc: '', b: '', t: [], lang: [], ug: [], L: {}, yrs: new Set(), img: '' }));
     }));
-    const runs = d3.rollups(VIS.people.filter((v) => !v.y.includes('2025')), (g) => g.length, (v) => v.y.length).sort((a, b) => a[0] - b[0]);
+    const runs = d3.rollups(VP().filter((v) => !v.y.includes('2025')), (g) => g.length, (v) => v.y.length).sort((a, b) => a[0] - b[0]);
     hbars($('#visLong'), runs.map(([k, n]) => [`${k} class${k > 1 ? 'es' : ''}`, n]));
   }
 
@@ -535,7 +599,7 @@
       .map(([k, l]) => `<button type="button" role="radio" aria-checked="${visState.which === k}" data-k="${k}">${l}</button>`).join('');
     $('#visSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { visState.which = b.dataset.k; renderVisGrid(); }));
     const q = visState.q.toLowerCase().trim();
-    const rows = VIS.people.filter((v) => (visState.which === 'all' || (visState.which === 'hof' ? v.hof : v.y.includes('2025')))
+    const rows = VP().filter((v) => (visState.which === 'all' || (visState.which === 'hof' ? v.hof : v.y.includes('2025')))
       && (!q || v.n.toLowerCase().includes(q))).sort((a, b) => d3.ascending(a.n, b.n));
     $('#visGrid').innerHTML = rows.map((v, i) => {
       const p = visPerson(v);
@@ -582,10 +646,12 @@
   /* Wiring */
   let qTimer;
   $('#q').addEventListener('input', (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value; state.shown = PAGE; renderDirectory(); }, 150); });
-  [['#fDes', 'des'], ['#fReg', 'reg'], ['#fCty', 'cty'], ['#fLang', 'lang']].forEach(([sel, k]) =>
+  $('#fReg').addEventListener('change', (e) => setScope({ reg: e.target.value }));
+  $('#fCty').addEventListener('change', (e) => setScope({ cty: e.target.value }));
+  [['#fDes', 'des'], ['#fLang', 'lang']].forEach(([sel, k]) =>
     $(sel).addEventListener('change', (e) => { state[k] = e.target.value; state.shown = PAGE; renderDirectory(); }));
   $('#fRet').addEventListener('change', (e) => { state.ret = e.target.checked; state.shown = PAGE; renderDirectory(); });
-  $('#clearBtn').addEventListener('click', () => { Object.assign(state, { q: '', des: '', reg: '', cty: '', lang: '', ret: false, shown: PAGE }); renderFilters(); renderDirectory(); });
+  $('#clearBtn').addEventListener('click', () => { Object.assign(state, { q: '', des: '', lang: '', ret: false, shown: PAGE }); renderFilters(); renderDirectory(); });
   $('#moreBtn').addEventListener('click', () => { state.shown += PAGE; renderDirectory(); });
   $('#themeBtn').addEventListener('click', () => {
     const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -596,7 +662,7 @@
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 
   function renderAll() {
-    renderYearSeg(); renderHero(); renderMap(); renderFlow(); renderSlope(); renderYearPatterns(); renderFilters(); renderDirectory(); renderVisionaries();
+    renderYearSeg(); renderScope(); renderHero(); renderMap(); renderFlow(); renderSlope(); renderYearPatterns(); renderFilters(); renderDirectory(); renderVisionaries();
   }
   renderAll();
   loadGeo().then(() => { mapState.rowsKey = null; syncMap(); });

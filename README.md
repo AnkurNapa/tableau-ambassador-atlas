@@ -7,7 +7,8 @@ Live: https://ankurnapa.github.io/tableau-ambassador-atlas/
 ## What is on the page
 
 - A constellation of the current class, grouped by programme. Solid dots are returning ambassadors and rings are new ones. Click any dot to read the bio.
-- A world map with one pin per ambassador at their city, clustered until you zoom in (the same Leaflet build as the Beverage-AI Radar). Click a cluster to filter the directory to that country.
+- A world map with one pin per person at their city, clustered until you zoom in (the same Leaflet build as the Beverage-AI Radar). Dots are ambassadors and diamonds are Visionaries; a switch shows everyone, one class of ambassadors or only Visionaries.
+- A global filter: click a map cluster, a region or a country and the whole page follows, from the hero to the Visionaries and the directory. A bar under the header says what is filtered and clears it.
 - Patterns: who stayed from one class to the next, class size by region over three years, programme mix, languages and the "talk to me about" topics.
 - Visionaries since 2012: a loom of every person by class year, class size split into returning and new, how long runs last, the named 2026 class and a searchable list. Anyone who is also an ambassador links to their full profile.
 - A searchable directory with filters for programme, region, country, language and returning ambassadors. Each card opens the full bio, user groups and links.
@@ -16,7 +17,7 @@ Filters live in the URL, so a filtered view can be shared as a link.
 
 ## Data
 
-The data comes from the public Tableau Ambassador vizzes on Tableau Public by Britton Staniar (2025 and 2026 classes) and the 2024 class viz. It was read on 14 October 2026 through the Tableau Embedding API (`tools/extract.html`). The 2023 viz does not allow data access, so it is left out. Visionaries from 2012 to 2025 come from Kevin Flerlage's Tableau Visionary Collection viz. For 2026, Tableau's announcement (18 March 2026) gives the class size and nine names. City coordinates are in `geo.json`, built by `tools/geocode.py` with Photon.
+The data comes from the public Tableau Ambassador vizzes on Tableau Public by Britton Staniar (2025 and 2026 classes) and the 2024 class viz. It was read on 14 October 2026 through the Tableau Embedding API (`tools/extract.html`). The 2023 viz does not allow data access, so it is left out. Visionaries from 2012 to 2025 come from Kevin Flerlage's Tableau Visionary Collection viz. For 2026, Tableau's announcement (18 March 2026) gives the class size and nine names. Visionary locations, photos and bios come from their Tableau Public profiles. City coordinates are in `geo.json`, built by `tools/geocode.py` with Photon.
 
 To refresh, serve `tools/extract.html?v=<workbook>/<view>` locally, wait for `window.__out`, then rebuild `data.js`.
 

@@ -159,6 +159,24 @@ svg text { font-family: var(--sans); }
 .dl2 { fill: var(--ink-2); font-size: 12px; }
 .gridl { stroke: var(--grid); }
 
+/* Global filter bar */
+.scope {
+  position: sticky; top: 55px; z-index: 19; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: center;
+  padding: 8px var(--gutter); background: var(--ink-1); color: var(--paper); font-size: 14px;
+}
+.scope[hidden] { display: none; }
+.scope .link-btn { color: var(--paper); text-decoration: underline; }
+.hb.sel { background: color-mix(in srgb, var(--bar) 14%, transparent); }
+.hb.sel .l { color: var(--ink-1); font-weight: 700; }
+.marker-cluster .cv {
+  position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 4px;
+  background: var(--ink-1); color: var(--paper); font: 700 10px/18px var(--sans); text-align: center; box-shadow: 0 0 0 2px #fff;
+}
+.pin--vis span { border-radius: 3px; transform: rotate(45deg) scale(.88); }
+.wmap__keys i.dia { border-radius: 2px; transform: rotate(45deg) scale(.85); background: var(--ink-1); }
+.wmap__layers { margin: 0 0 8px; }
+.pop__b--ghost { background: none; color: #14161c; border: 1px solid #c9c6bd; }
+
 /* Visionaries */
 .vis-stats { max-width: 760px; margin-top: 18px; }
 .mt16 { margin-top: 16px; }

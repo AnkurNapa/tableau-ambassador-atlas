@@ -30,6 +30,9 @@ def places() -> set[str]:
     rows = json.loads((ROOT / "data.js").read_text()[len("window.AMB="):-1])
     found = {a["k"] for a in rows if a["k"]}
     found |= {loc(a) for a in rows if a["c"] and a["k"]}
+    vis = json.loads((ROOT / "vis.js").read_text()[len("window.VIS="):-1])["people"]
+    found |= {v["k"] for v in vis if v.get("k")}
+    found |= {v["loc"] for v in vis if v.get("c") and v.get("k")}
     return found
 
 

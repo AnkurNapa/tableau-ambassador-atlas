@@ -32,6 +32,7 @@
     </button>
   </div>
 </header>
+<div class="scope" id="scope" role="status" hidden></div>
 
 <main id="top">
   <section class="hero" aria-labelledby="heroTitle">
@@ -50,8 +51,8 @@
   <section id="map" class="band" aria-labelledby="mapTitle">
     <div class="sec-head">
       <p class="kicker">Where they live</p>
-      <h2 id="mapTitle">Ambassadors in <span id="mapCountries">48</span> countries</h2>
-      <p class="sub">One pin per ambassador at their city, clustered until you zoom in. Click a cluster to filter the directory to that country; click a pin to meet the person.</p>
+      <h2 id="mapTitle">Ambassadors in <span id="mapCountries">48</span> countries, with every Visionary</h2>
+      <p class="sub">One pin per person at their city: dots are ambassadors, diamonds are Visionaries. Click a cluster or a bar to filter the whole page to that country or region.</p>
     </div>
     <div class="map-grid">
       <figure class="card map-card"><div id="world" class="wmap"></div></figure>
@@ -76,7 +77,7 @@
         <svg id="flow" role="img" aria-label="Ambassadors who stayed, left and joined between 2025 and 2026"></svg>
       </figure>
       <figure class="card">
-        <figcaption class="chart-title">Class size by region, 2024 to 2026</figcaption>
+        <figcaption class="chart-title" id="slopeTitle">Class size by region, 2024 to 2026</figcaption>
         <svg id="slope" role="img" aria-label="Slope chart of ambassadors per region by year"></svg>
       </figure>
       <figure class="card">
@@ -100,7 +101,7 @@
   <section id="visionaries" class="band" aria-labelledby="visTitle">
     <div class="sec-head">
       <p class="kicker">Tableau Visionaries, formerly Zen Masters</p>
-      <h2 id="visTitle"><span id="visCount">135</span> Visionaries since 2012</h2>
+      <h2 id="visTitle">135 Visionaries since 2012</h2>
       <p class="sub">Each column below is one Visionary and each row is a class year. Read across a row for that year's class, or down a column for one person's run. Click a column to open their profile.</p>
       <dl class="stats vis-stats" id="visStats"></dl>
     </div>
