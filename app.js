@@ -176,7 +176,7 @@
   let GEO = {};
   const WORLD_VIEW = { center: [25, 10], zoom: 2 };
   async function loadGeo() {
-    try { GEO = await (await fetch('geo.json')).json(); } catch (err) { console.error('geo.json failed to load', err); }
+    try { GEO = await (await fetch('geo.json?v=202610140054')).json(); } catch (err) { console.error('geo.json failed to load', err); }
   }
   const coordOf = (a) => GEO[a.loc] || GEO[a.k] || null;
   const mapState = { map: null, cluster: null, markers: [], rowsKey: null, active: undefined };
