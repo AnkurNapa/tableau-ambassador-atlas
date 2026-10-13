@@ -99,7 +99,8 @@
   /* Hero */
   function renderHero() {
     const rows = yearRows();
-    $('#heroYear').textContent = `${state.year}${scopeLabel() ? ` in ${scopeLabel()}` : ''}`;
+    $('#heroYear').textContent = state.year;
+    $('#heroScope').textContent = scopeLabel() ? ` in ${scopeLabel()}` : '';
     $('#heroCount').textContent = fmt(rows.length);
     const countries = new Set(rows.map((a) => a.k).filter(Boolean)).size;
     const langs = new Set(rows.flatMap((a) => a.lang)).size;
@@ -176,7 +177,7 @@
   let GEO = {};
   const WORLD_VIEW = { center: [25, 10], zoom: 2 };
   async function loadGeo() {
-    try { GEO = await (await fetch('geo.json?v=202610140054')).json(); } catch (err) { console.error('geo.json failed to load', err); }
+    try { GEO = await (await fetch('geo.json?v=202610140102')).json(); } catch (err) { console.error('geo.json failed to load', err); }
   }
   const coordOf = (a) => GEO[a.loc] || GEO[a.k] || null;
   const mapState = { map: null, cluster: null, markers: [], rowsKey: null, active: undefined };
